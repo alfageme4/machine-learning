@@ -1,0 +1,128 @@
+---
+title: "Machine learning project"
+author: "Pablo Garcia-Alfageme Zarza"
+date: "25/01/2015"
+output: html_document
+---
+We planned to build a machine learning algorithm to predict activity quality from activity monitors. 
+First of all  we loaded the necessary packages and the database and saw that it has 160 variables and 19622 samples
+```{r cache=TRUE,message=FALSE}
+library(caret)
+library(doMC)
+training<-read.csv("./pml-training.csv",stringsAsFactors=TRUE)
+dim(training)
+```
+We had a look to the summary of the dataframe and we could see that it has many predictors with lots of  NA's and "", so we decided to tidy it up. We found those  unnecessary predictorrs and eliminated them from the dataframe, we took out 100 covariates.
+```{r}
+noInterest <- which(apply(training,2,function(x) sum(is.na(x)|x==""))>19000)
+training<-training[,-noInterest]
+length(noInterest)
+rm(noInterest)
+```
+We look to the predictors with near zero variance and found just one, "new_window"
+```{r cache=TRUE}
+nzv<-nearZeroVar(training,saveMetrics = TRUE)
+names(training)[which(nzv$nzv)]
+training <- training[-which(nzv$nzv)]
+```
+We took out the redictors "X", "user_name" and "cvtd_timestamp", because they are not interesting for the study and the could cause overfitting problems.
+```{r}
+noInterest = which(names(training)%in%c("X","user_name", "cvtd_timestamp"))
+training <- training[,-noInterest]
+```
+We decided to take out the predictors with high correlation and we finished with 49 variables
+```{r cache=TRUE}
+y = training[which(names(training)=="classe")]
+training<-training[-which(names(training)=="classe")]
+corMatrix <- cor(training)
+highCorr <- findCorrelation(corMatrix,.9)
+training<-training[,-highCorr]
+training<-cbind(training,y)
+dim(training)
+```
+We planned to build three models, a boosting model with trees, a random forest model and a svm model, compare them and,if it was neccesary, combine them.
+We divided the samples in three sets, the training set(60%), the testing set(20%) and the validation set(20%).
+```{r cache=TRUE}
+inBuild <- createDataPartition(training$classe,p=0.8,list=FALSE)
+validation <- training[-inBuild,]
+buildData <- training[inBuild,]
+inTrain <- createDataPartition(buildData$classe,p=.75,list=FALSE)
+training <- buildData[inTrain,]
+testing <- buildData[-inTrain,]
+```
+We built the three models over the training set. 
+First of all we build a boosting model with trees. We did it in pararell with 4 processors. We used the default parameters,that included an bootstrapping resampling, and got the best accuracy with 150 trees, an interaction.depht of 3 and 0.1 shrinkage. The best accuracy arrived to 0.9946803.
+```{r eval=FALSE}
+registerDoMC(4)
+set.seed(1)
+mod1 <- train(classe~.,method="gbm",data=training,verbose=FALSE)
+```
+```{r echo=FALSE,cache=TRUE}
+load("mod1.Rdata")
+```
+```{r}
+mod1
+```
+Then we build a random forest with a bootstrapping resampling and got the best accuracy of 0.9952706 with mtry=25
+```{r eval=FALSE}
+set.seed(1)
+mod2 <- train(classe~.,method="rf",data=training)
+```
+```{r echo=FALSE,cache=TRUE}
+load("mod2.Rdata")
+```
+```{r}
+mod2
+```
+Finally we built a svm model ang got the best accuracy of 0.9238622 with C=1
+```{r eval=FALSE}
+set.seed(1)
+mod3 <- train(classe~.,method="svm",data=training)
+```
+```{r echo=FALSE,cache=TRUE}
+load("mod3.Rdata")
+```
+```{r}
+mod3
+```
+We used the three models to predict the test set and after we combined them in with the real value of the "classe" variable
+```{r cache=TRUE,message=FALSE}
+pred1<-predict(mod1,testing)
+sum(pred1==testing$classe)/length(pred1)
+pred2<-predict(mod2,testing)
+sum(pred2==testing$classe)/length(pred2)
+pred3<-predict(mod3,testing)
+sum(pred3==testing$classe)/length(pred3)
+predDF<-data.frame(pred1,pred2,pred3,classe=testing$classe)
+```
+We tried to ways of combining the three models. The first one is a simple averaging and we got an accuracy of 0.9987255, a bit less than the accuracy got by the random forest method.
+```{r cache=TRUE,message=FALSE}
+avePred<-apply(predDF,1,function(x) names(which.max(table(x)))[1])
+sum(avePred==testing$classe)/length(avePred)
+```
+Then we tried to combine the three models building a gbm method with its results and we a result a bit better than the best model.
+```{r eval=FALSE}
+combMod2 <- train(classe~.,method="gbm",data=predDF)
+```
+```{r echo=FALSE,cache=TRUE}
+load("combMod2.Rdata")
+```
+```{r cache=TRUE,message=FALSE}
+combPred=predict(combMod2,testing)
+sum(combPred==testing$classe)/length(combPred)
+```
+Finally we compared the 5 models using the validation set and saw that combining the models had not really better performance than the best of the methods.
+```{r cache=TRUE,message=FALSE}
+pred1<-predict(mod1,validation)
+sum(pred1==validation$classe)/length(pred1)
+pred2<-predict(mod2,validation)
+sum(pred2==validation$classe)/length(pred2)
+pred3<-predict(mod3,validation)
+sum(pred3==validation$classe)/length(pred3)
+predDF<-data.frame(pred1,pred2,pred3,classe=validation$classe)
+avePred<-apply(predDF,1,function(x) names(which.max(table(x)))[1])
+sum(avePred==validation$classe)/length(avePred)
+combPred=predict(combMod2,validation)
+sum(combPred==validation$classe)/length(combPred)
+```
+So we decided to build the model to predict activity quality from activity monitors using a random forest with mtry=25
